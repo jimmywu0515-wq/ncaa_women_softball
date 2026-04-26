@@ -76,9 +76,8 @@ The architecture is built for scalability and production readiness, transitionin
 ---
 
 ## 🗺️ Future Roadmap
-- [ ] Integration of Azure Data Factory for managed ingestion.
-- [ ] Implementation of a dbt-test suite for data quality monitoring.
-- [ ] Expansion to NCAA Baseball and other collegiate sports.
+- [ ] **Automated Seasonal Trigger**: Implement dynamic scheduling to automatically detect and fetch data when a new NCAA season begins.
+- [ ] **Expanded Multi-Sport Support**: Adapt the scraping logic for NCAA Baseball and other collegiate sports.
+- [ ] **Advanced Analytics**: Integrate machine learning models for player performance prediction.
 
 ---
-**Developed by Antigravity AI — Data Engineering for Modern Sports Insights**

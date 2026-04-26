@@ -1,5 +1,4 @@
 name: 'ncaa_analytics'
-version: '1.0.0'
 config-version: 2
 
 profile: 'ncaa_analytics'
