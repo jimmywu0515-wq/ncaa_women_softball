@@ -122,9 +122,9 @@ else:  # Transfer Portal
         if not portal_df.empty:
             # Filters
             pos_filter = st.sidebar.multiselect("Filter by Position", 
-                                              portal_df['position'].unique())
+                                              sorted(portal_df['position'].unique()))
             status_filter = st.sidebar.multiselect("Filter by Status", 
-                                                 portal_df['status'].unique())
+                                                 sorted(portal_df['status'].unique()))
             
             df_display = portal_df.copy()
             if pos_filter:
@@ -132,8 +132,34 @@ else:  # Transfer Portal
             if status_filter:
                 df_display = df_display[df_display['status'].isin(status_filter)]
 
-            st.dataframe(df_display.drop(columns=['id']), 
-                        use_container_width=True, hide_index=True)
+            # Summary metrics
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Total Entries", len(portal_df))
+            committed = portal_df[portal_df['status'] == 'Committed']
+            m2.metric("Committed", len(committed))
+            entered = portal_df[portal_df['status'] == 'Entered']
+            m3.metric("Still Available", len(entered))
+
+            st.markdown("---")
+
+            # Display columns
+            display_cols = ['player_name', 'position', 'year', 'previous_team', 
+                          'new_team', 'status', 'hometown', 'high_school', 'on3_rating']
+            available_cols = [c for c in display_cols if c in df_display.columns]
+            
+            st.dataframe(
+                df_display[available_cols].rename(columns={
+                    'player_name': 'Player',
+                    'position': 'Position',
+                    'year': 'Year',
+                    'previous_team': 'From',
+                    'new_team': 'To',
+                    'status': 'Status',
+                    'hometown': 'Hometown',
+                    'high_school': 'High School',
+                    'on3_rating': 'On3 Rating',
+                }),
+                use_container_width=True, hide_index=True)
             
             # Analytics
             st.markdown("---")
