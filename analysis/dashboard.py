@@ -36,12 +36,18 @@ if not teams:
 
 selected_team = st.sidebar.selectbox("Select Team", ["All"] + teams)
 
-# Load players — only for the selected team's batting data
+# Load players — only for the selected team's batting data with > 20 at-bats
 try:
-    pq = "SELECT DISTINCT player FROM play_by_play WHERE batting_team != 'IUPUI'"
+    pq = """
+    SELECT player 
+    FROM play_by_play 
+    WHERE batting_team != 'IUPUI' AND hit_location != 'Unknown'
+    """
     if selected_team != "All":
         pq += f" AND source_team = '{selected_team}' AND batting_team = '{selected_team}'"
-    pq += " ORDER BY player"
+    
+    pq += " GROUP BY player HAVING COUNT(*) > 20 ORDER BY player"
+    
     players_df = pd.read_sql(pq, engine)
     players = players_df['player'].tolist()
 except Exception:
