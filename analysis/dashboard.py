@@ -1,7 +1,5 @@
 import sys
 import os
-
-# Add project root to path so imports work
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import streamlit as st
@@ -12,42 +10,39 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Database Setup
 DB_URL = os.getenv("DATABASE_URL", "sqlite:///data/ncaa_softball.db")
 engine = create_engine(DB_URL)
 
 st.set_page_config(page_title="NCAA Softball Performance Dashboard", layout="wide")
 
 st.title("🥎 NCAA Softball Performance Analytics")
-st.markdown("##### IUPUI 2024 — Opponent Batted Ball Analysis")
+st.markdown("##### IUPUI 2024 Opponents — Full Season Batted Ball Analysis")
 st.markdown("---")
 
 # ── Sidebar Filters ──────────────────────────────────────────
 
 st.sidebar.header("🔍 Filters")
 
-# Load opponent teams
+# Load opponent teams (source_team = the team whose full season we scraped)
 try:
     teams_df = pd.read_sql(
-        "SELECT DISTINCT opponent FROM play_by_play WHERE batting_team != 'IUPUI' ORDER BY opponent",
-        engine)
-    teams = teams_df['opponent'].tolist()
+        "SELECT DISTINCT source_team FROM play_by_play ORDER BY source_team", engine)
+    teams = teams_df['source_team'].tolist()
 except Exception:
     teams = []
 
 if not teams:
-    st.sidebar.warning("No data found. Run the scraper first:\n`python pipelines/ncaa_pbp_scraper.py`")
-    teams = []
+    st.sidebar.error("No data. Run scraper first:\n`python pipelines/ncaa_pbp_scraper.py`")
 
-selected_team = st.sidebar.selectbox("Select Opponent", ["All"] + teams)
+selected_team = st.sidebar.selectbox("Select Team", ["All"] + teams)
 
-# Load players for selected team
+# Load players — only for the selected team's batting data
 try:
-    player_query = "SELECT DISTINCT player FROM play_by_play WHERE batting_team != 'IUPUI'"
+    pq = "SELECT DISTINCT player FROM play_by_play WHERE batting_team != 'IUPUI'"
     if selected_team != "All":
-        player_query += f" AND opponent = '{selected_team}'"
-    player_query += " ORDER BY player"
-    players_df = pd.read_sql(player_query, engine)
+        pq += f" AND source_team = '{selected_team}' AND batting_team = '{selected_team}'"
+    pq += " ORDER BY player"
+    players_df = pd.read_sql(pq, engine)
     players = players_df['player'].tolist()
 except Exception:
     players = []
@@ -55,30 +50,32 @@ except Exception:
 selected_player = st.sidebar.selectbox("Select Player", ["All"] + players)
 
 st.sidebar.markdown("---")
-st.sidebar.info("Data scraped from iuindyjags.com 2024 PBP")
+st.sidebar.info("Data from each team's Sidearm Sports PBP (2024 full season)")
 
 # ── Main Content ─────────────────────────────────────────────
 
 col1, col2 = st.columns([2, 1])
 
 with col1:
-    st.subheader(f"Heat Map: {selected_team} — {selected_player}")
+    label_team = selected_team if selected_team != "All" else "All Teams"
+    label_player = selected_player if selected_player != "All" else "All Players"
+    st.subheader(f"Heat Map: {label_team} — {label_player}")
     fig = generate_filtered_heat_map(team=selected_team, player=selected_player)
     st.pyplot(fig)
 
 with col2:
     st.subheader("📊 Quick Stats")
 
-    stat_query = ("SELECT hit_location, hit_type, is_hit, player "
-                  "FROM play_by_play "
-                  "WHERE batting_team != 'IUPUI' AND hit_location != 'Unknown'")
+    sq = ("SELECT hit_location, hit_type, is_hit, player "
+          "FROM play_by_play "
+          "WHERE batting_team != 'IUPUI' AND hit_location != 'Unknown'")
     if selected_team != "All":
-        stat_query += f" AND opponent = '{selected_team}'"
+        sq += f" AND source_team = '{selected_team}' AND batting_team = '{selected_team}'"
     if selected_player != "All":
-        stat_query += f" AND player = '{selected_player}'"
+        sq += f" AND player = '{selected_player}'"
 
     try:
-        stats_df = pd.read_sql(stat_query, engine)
+        stats_df = pd.read_sql(sq, engine)
         if not stats_df.empty:
             total_plays = len(stats_df)
             total_hits = int(stats_df['is_hit'].sum())
@@ -95,14 +92,13 @@ with col2:
             st.bar_chart(loc_counts)
 
             st.markdown("**Hit Type Breakdown**")
-            type_counts = stats_df['hit_type'].value_counts()
-            st.dataframe(type_counts.reset_index().rename(
-                columns={'index': 'Type', 'hit_type': 'Count'}),
-                hide_index=True, use_container_width=True)
+            type_counts = stats_df['hit_type'].value_counts().reset_index()
+            type_counts.columns = ['Type', 'Count']
+            st.dataframe(type_counts, hide_index=True, use_container_width=True)
         else:
             st.warning("No data for selected filters.")
     except Exception as e:
         st.error(f"Run scraper first: `python pipelines/ncaa_pbp_scraper.py`")
 
 st.markdown("---")
-st.caption("Data source: iuindyjags.com — 2024 Softball Play-by-Play")
+st.caption("Data source: Sidearm Sports — 2024 NCAA Softball Play-by-Play")
