@@ -20,8 +20,19 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ── Database Setup ──────────────────────────────────────────────
-DB_URL = os.getenv("DATABASE_URL", "sqlite:///data/ncaa_softball.db")
-engine = create_engine(DB_URL)
+def get_db_engine():
+    """
+    Creates a database engine supporting both SQLite and Azure SQL.
+    For Azure, use: mssql+pyodbc://<user>:<pw>@<server>.database.windows.net/<db>?driver=ODBC+Driver+17+for+SQL+Server
+    """
+    url = os.getenv("DATABASE_URL", "sqlite:///data/ncaa_softball.db")
+    
+    if "database.windows.net" in url:
+        # Azure SQL requires specific connection pooling for robustness
+        return create_engine(url, pool_pre_ping=True, pool_size=10, max_overflow=20)
+    return create_engine(url)
+
+engine = get_db_engine()
 Base = declarative_base()
 
 

@@ -5,13 +5,20 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine
+from sqlalchemy.ext.declarative import declarative_base
 from modeling.heatmap_generator import generate_filtered_heat_map
 from dotenv import load_dotenv
 
 load_dotenv()
 
-DB_URL = os.getenv("DATABASE_URL", "sqlite:///data/ncaa_softball.db")
-engine = create_engine(DB_URL)
+def get_db_engine():
+    url = os.getenv("DATABASE_URL", "sqlite:///data/ncaa_softball.db")
+    if "database.windows.net" in url:
+        return create_engine(url, pool_pre_ping=True, pool_size=10, max_overflow=20)
+    return create_engine(url)
+
+engine = get_db_engine()
+Base = declarative_base()
 
 st.set_page_config(page_title="NCAA Softball Performance Dashboard", layout="wide")
 

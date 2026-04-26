@@ -15,8 +15,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DB_URL = os.getenv("DATABASE_URL", "sqlite:///data/ncaa_softball.db")
-engine = create_engine(DB_URL)
+# Database Setup
+def get_db_engine():
+    url = os.getenv("DATABASE_URL", "sqlite:///data/ncaa_softball.db")
+    if "database.windows.net" in url:
+        return create_engine(url, pool_pre_ping=True, pool_size=10, max_overflow=20)
+    return create_engine(url)
+
+engine = get_db_engine()
 Base = declarative_base()
 
 

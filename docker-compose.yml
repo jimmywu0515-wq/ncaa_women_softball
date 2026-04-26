@@ -1,20 +1,34 @@
 version: '3.8'
 
 services:
-  pipeline:
+  # ETL Orchestration (Airflow)
+  airflow:
     build: .
     volumes:
       - .:/app
-    env_file:
-      - .env
-    command: python pipelines/ncaa_pbp_scraper.py
+    env_file: .env
+    command: airflow standalone
+    ports:
+      - "8080:8080"
 
-  analysis:
+  # Data Transformation (dbt) - usually triggered by Airflow
+  dbt:
     build: .
     volumes:
       - .:/app
-    env_file:
-      - .env
-    command: python modeling/heatmap_generator.py
-    depends_on:
-      - pipeline
+    env_file: .env
+    profiles_dir: ./transformations
+    command: ["sleep", "infinity"] # Keep alive for manual runs
+
+  # Analytics Dashboard (Streamlit)
+  dashboard:
+    build: .
+    ports:
+      - "8501:8501"
+    volumes:
+      - .:/app
+    env_file: .env
+    command: streamlit run analysis/dashboard.py
+
+  # Note: Airbyte would typically be run as a separate service 
+  # or managed instance on Azure for the 'Extract & Load' phase.
