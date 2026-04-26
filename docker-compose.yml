@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  pipeline:
+    build: .
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    command: python pipelines/ncaa_pbp_scraper.py
+
+  analysis:
+    build: .
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    command: python modeling/heatmap_generator.py
+    depends_on:
+      - pipeline
