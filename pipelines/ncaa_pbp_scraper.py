@@ -1,13 +1,12 @@
 import os
 import re
+import time
 import requests
 import pandas as pd
 from bs4 import BeautifulSoup
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine, Column, Integer, String, Float, text
+from sqlalchemy.orm import declarative_base, sessionmaker
 from dotenv import load_dotenv
-import time
 
 load_dotenv()
 
@@ -20,134 +19,229 @@ class PlayByPlay(Base):
     __tablename__ = 'play_by_play'
     id = Column(Integer, primary_key=True)
     game_id = Column(String(50))
-    inning = Column(String(10))
-    team = Column(String(100))
-    player = Column(String(100)) # New Column
+    opponent = Column(String(100))
+    inning = Column(String(20))
+    half = Column(String(10))        # "Top" or "Bottom"
+    batting_team = Column(String(100)) # Which team is batting
+    player = Column(String(100))
     description = Column(String(500))
     hit_location = Column(String(50))
+    hit_type = Column(String(50))    # single, double, triple, HR, groundout, flyout, etc.
     is_hit = Column(Integer)
 
 Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
 
-class NCAAScraper:
-    def __init__(self, team_id="572238", year="2024"):
-        self.team_id = team_id
-        self.year = year
-        self.base_url = "https://stats.ncaa.org"
+class IUIndyScraper:
+    """Scrapes PBP data from iuindyjags.com for IUPUI 2024 opponents."""
+
+    BASE_URL = "https://iuindyjags.com"
+    SCHEDULE_URL = f"{BASE_URL}/sports/softball/schedule/2024"
+
+    def __init__(self):
         self.headers = {
-            "User-Agent": os.getenv("USER_AGENT")
+            "User-Agent": os.getenv("USER_AGENT",
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         }
 
-    def get_game_ids(self):
-        """Fetches all game IDs for the season from the team schedule page."""
-        url = f"{self.base_url}/teams/{self.team_id}"
-        print(f"Fetching schedule from: {url}")
-        response = requests.get(url, headers=self.headers)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        game_links = soup.find_all('a', href=re.compile(r'/contests/\d+/box_score'))
-        game_ids = [re.search(r'/contests/(\d+)/box_score', link['href']).group(1) for link in game_links]
-        return list(set(game_ids))
+    # ── Extraction ──────────────────────────────────────────────
 
-    def scrape_pbp(self, game_id):
-        """Scrapes play-by-play data for a specific game."""
-        url = f"{self.base_url}/contests/{game_id}/play_by_play"
-        print(f"Scraping PBP: {url}")
-        response = requests.get(url, headers=self.headers)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Get team names from page header or similar
-        team_headers = soup.find_all('div', class_='team-name') # Placeholder, will adapt
-        team1_name = "Home"
-        team2_name = "Away"
-        
-        tables = soup.find_all('table', class_='mytable')
-        pbp_data = []
-        
+    def get_all_games(self):
+        """Fetch list of (opponent_slug, game_id) from the 2024 schedule."""
+        r = requests.get(self.SCHEDULE_URL, headers=self.headers)
+        soup = BeautifulSoup(r.text, 'html.parser')
+        links = soup.find_all('a', href=re.compile(
+            r'/sports/softball/stats/2024/.+/boxscore/\d+'))
+
+        seen, games = set(), []
+        for link in links:
+            m = re.search(r'/stats/2024/(.+)/boxscore/(\d+)', link['href'])
+            if m:
+                key = (m.group(1), m.group(2))
+                if key not in seen:
+                    seen.add(key)
+                    games.append(key)
+        return games
+
+    def scrape_pbp(self, opponent_slug, game_id):
+        """Scrape PBP from a single box-score page."""
+        url = f"{self.BASE_URL}/sports/softball/stats/2024/{opponent_slug}/boxscore/{game_id}"
+        print(f"  Scraping: {url}")
+        r = requests.get(url, headers=self.headers)
+        soup = BeautifulSoup(r.text, 'html.parser')
+
+        pbp_section = soup.find(id='play-by-play')
+        if not pbp_section:
+            print(f"    ⚠ No PBP section found for game {game_id}")
+            return pd.DataFrame()
+
+        opponent_name = opponent_slug.replace('-', ' ').title()
+        rows = []
+
+        # Each half-inning is in its own table inside the PBP section
+        tables = pbp_section.find_all('table')
         for table in tables:
-            rows = table.find_all('tr')
-            current_inning = ""
-            for row in rows:
-                cols = row.find_all('td')
-                if len(cols) == 1 and 'Inning' in cols[0].text:
-                    current_inning = cols[0].text.strip()
+            # The caption or preceding header tells us the half-inning
+            caption = table.find('caption')
+            header_text = ""
+            if caption:
+                header_text = caption.text.strip()
+            else:
+                prev = table.find_previous(['h3', 'h4', 'div'])
+                if prev:
+                    header_text = prev.text.strip()
+
+            # Determine inning and batting team
+            inning_match = re.search(r'(Top|Bottom)\s+of\s+(\d+)', header_text)
+            if not inning_match:
+                # Try alternative: "UAB - Top of 1st"
+                inning_match = re.search(r'(Top|Bottom)\s+of\s+(\w+)', header_text)
+            
+            if inning_match:
+                half = inning_match.group(1)
+                inning_num = inning_match.group(2)
+            else:
+                half = "Unknown"
+                inning_num = "?"
+
+            # Determine batting team from header
+            is_opponent_batting = False
+            header_lower = header_text.lower()
+            if "iupui" in header_lower or "iu indy" in header_lower or "iup" in header_lower:
+                batting_team = "IUPUI"
+            else:
+                batting_team = opponent_name
+                is_opponent_batting = True
+
+            # Parse rows
+            trs = table.find_all('tr')
+            for tr in trs:
+                tds = tr.find_all('td')
+                if not tds:
                     continue
-                
-                if len(cols) >= 3:
-                    team1_play = cols[1].text.strip()
-                    team2_play = cols[2].text.strip() if len(cols) > 2 else ""
-                    
-                    if team1_play:
-                        player = team1_play.split(' ')[0] # Basic heuristic: first word is player
-                        pbp_data.append({
-                            "game_id": game_id,
-                            "inning": current_inning,
-                            "team": team1_name,
-                            "player": player,
-                            "description": team1_play
-                        })
-                    if team2_play:
-                        player = team2_play.split(' ')[0]
-                        pbp_data.append({
-                            "game_id": game_id,
-                            "inning": current_inning,
-                            "team": team2_name,
-                            "player": player,
-                            "description": team2_play
-                        })
-        
-        return pd.DataFrame(pbp_data)
+                desc = tds[0].text.strip()
+                if not desc or desc == 'Play Description':
+                    continue
+                # Skip summary rows
+                if desc.startswith('Runs') or desc.startswith('Hits') or desc.startswith('Errors'):
+                    continue
 
-    def transform_pbp(self, df):
-        """Feature engineering: Extract hit location from play description."""
-        def extract_location(desc):
-            desc = desc.lower()
-            if 'left field' in desc: return 'LF'
-            if 'center field' in desc: return 'CF'
-            if 'right field' in desc: return 'RF'
-            if 'shortstop' in desc or 'to ss' in desc: return 'SS'
-            if 'second base' in desc or 'to 2b' in desc: return '2B'
-            if 'third base' in desc or 'to 3b' in desc: return '3B'
-            if 'first base' in desc or 'to 1b' in desc: return '1B'
-            if 'pitcher' in desc or 'to p' in desc: return 'P'
-            if 'catcher' in desc or 'to c' in desc: return 'C'
-            return 'Unknown'
+                # Extract player name (first word or "Last, First" pattern)
+                player = self._extract_player(desc)
+                hit_loc = self._extract_location(desc)
+                hit_type = self._extract_hit_type(desc)
+                is_hit = 1 if hit_type in ['single', 'double', 'triple', 'home_run'] else 0
 
-        df['hit_location'] = df['description'].apply(extract_location)
-        df['is_hit'] = df['description'].apply(lambda x: 1 if any(h in x.lower() for h in ['singled', 'doubled', 'tripled', 'homered']) else 0)
-        return df
+                rows.append({
+                    'game_id': game_id,
+                    'opponent': opponent_name,
+                    'inning': inning_num,
+                    'half': half,
+                    'batting_team': batting_team,
+                    'player': player,
+                    'description': desc,
+                    'hit_location': hit_loc,
+                    'hit_type': hit_type,
+                    'is_hit': is_hit,
+                })
 
-    def run_pipeline(self, limit=5):
-        """Executes the full ETL pipeline."""
-        game_ids = self.get_game_ids()
-        print(f"Found {len(game_ids)} games.")
-        
+        return pd.DataFrame(rows)
+
+    # ── Transformation helpers ──────────────────────────────────
+
+    @staticmethod
+    def _extract_player(desc):
+        """Extract player name from play description."""
+        # Patterns: "B. Wiggins walked" or "Calvert, Ken singled"
+        m = re.match(r'^([A-Z][a-z]+,\s*[A-Z][a-z]+)', desc)
+        if m:
+            return m.group(1)
+        m = re.match(r'^([A-Z]\.\s*[A-Z][a-z]+)', desc)
+        if m:
+            return m.group(1)
+        # Fallback: first two words
+        parts = desc.split()
+        if len(parts) >= 2:
+            return f"{parts[0]} {parts[1]}".rstrip(',')
+        return parts[0] if parts else "Unknown"
+
+    @staticmethod
+    def _extract_location(desc):
+        d = desc.lower()
+        if 'left center' in d:   return 'LCF'
+        if 'right center' in d:  return 'RCF'
+        if 'left field' in d or 'to lf' in d:  return 'LF'
+        if 'center field' in d or 'to cf' in d: return 'CF'
+        if 'right field' in d or 'to rf' in d:  return 'RF'
+        if 'right side' in d:    return 'RF'
+        if 'left side' in d:     return 'LF'
+        if 'shortstop' in d or 'to ss' in d:    return 'SS'
+        if 'second base' in d or 'to 2b' in d:  return '2B'
+        if 'third base' in d or 'to 3b' in d:   return '3B'
+        if 'first base' in d or 'to 1b' in d:   return '1B'
+        if 'pitcher' in d or 'to p ' in d:      return 'P'
+        if 'catcher' in d or 'to c ' in d:      return 'C'
+        return 'Unknown'
+
+    @staticmethod
+    def _extract_hit_type(desc):
+        d = desc.lower()
+        if 'homered' in d or 'home run' in d:  return 'home_run'
+        if 'tripled' in d:   return 'triple'
+        if 'doubled' in d:   return 'double'
+        if 'singled' in d:   return 'single'
+        if 'walked' in d:    return 'walk'
+        if 'struck out' in d: return 'strikeout'
+        if 'grounded out' in d: return 'groundout'
+        if 'flied out' in d or 'flyout' in d: return 'flyout'
+        if 'fouled out' in d: return 'foulout'
+        if 'popped up' in d or 'pop out' in d: return 'popout'
+        if 'lined out' in d: return 'lineout'
+        if 'reached on' in d: return 'reached'
+        if 'hit by pitch' in d: return 'hbp'
+        if 'stole' in d:     return 'stolen_base'
+        if 'advanced' in d:  return 'advance'
+        if 'picked off' in d: return 'pickoff'
+        if 'out at' in d:    return 'out'
+        if 'bunt' in d:      return 'bunt'
+        return 'other'
+
+    # ── Loading ─────────────────────────────────────────────────
+
+    def run_pipeline(self, limit=None):
+        """Execute the full ETL pipeline."""
+        games = self.get_all_games()
+        print(f"Found {len(games)} games on the 2024 schedule.\n")
+
         session = Session()
-        for g_id in game_ids[:limit]: # Limit for demonstration
-            raw_data = self.scrape_pbp(g_id)
-            if raw_data.empty: continue
-            
-            clean_data = self.transform_pbp(raw_data)
-            
-            for _, row in clean_data.iterrows():
-                play = PlayByPlay(
-                    game_id=row['game_id'],
-                    inning=row['inning'],
-                    team=row['team'],
-                    player=row['player'],
-                    description=row['description'],
-                    hit_location=row['hit_location'],
-                    is_hit=row['is_hit']
-                )
+        # Clear old data
+        session.execute(text("DELETE FROM play_by_play"))
+        session.commit()
+
+        total_plays = 0
+        for i, (opp_slug, g_id) in enumerate(games):
+            if limit and i >= limit:
+                break
+            print(f"[{i+1}/{len(games)}] {opp_slug} (game {g_id})")
+            df = self.scrape_pbp(opp_slug, g_id)
+            if df.empty:
+                continue
+
+            for _, row in df.iterrows():
+                play = PlayByPlay(**row.to_dict())
                 session.add(play)
-            
+
             session.commit()
-            print(f"Stored {len(clean_data)} plays for game {g_id}")
-            time.sleep(1) # Be respectful to servers
-        
+            total_plays += len(df)
+            print(f"    ✓ Stored {len(df)} plays (total: {total_plays})\n")
+            time.sleep(0.5)  # Be polite
+
         session.close()
+        print(f"\n{'='*50}")
+        print(f"Pipeline complete. Total plays stored: {total_plays}")
+
 
 if __name__ == "__main__":
-    scraper = NCAAScraper()
+    scraper = IUIndyScraper()
     scraper.run_pipeline()
