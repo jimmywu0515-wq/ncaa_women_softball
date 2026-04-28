@@ -1,0 +1,41 @@
+name: NCAA Softball CD (Azure)
+
+on:
+  workflow_run:
+    workflows: ["NCAA Softball CI"]
+    types:
+      - completed
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Login to Azure Container Registry
+      uses: azure/docker-login@v1
+      with:
+        login-server: ${{ secrets.AZURE_REGISTRY_SERVER }}
+        username: ${{ secrets.AZURE_REGISTRY_USERNAME }}
+        password: ${{ secrets.AZURE_REGISTRY_PASSWORD }}
+
+    - name: Build and Push Docker Image
+      run: |
+        docker build . -t ${{ secrets.AZURE_REGISTRY_SERVER }}/ncaa-softball:${{ github.sha }}
+        docker tag ${{ secrets.AZURE_REGISTRY_SERVER }}/ncaa-softball:${{ github.sha }} ${{ secrets.AZURE_REGISTRY_SERVER }}/ncaa-softball:latest
+        docker push ${{ secrets.AZURE_REGISTRY_SERVER }}/ncaa-softball:${{ github.sha }}
+        docker push ${{ secrets.AZURE_REGISTRY_SERVER }}/ncaa-softball:latest
+
+    - name: Deploy to Azure Web App
+      uses: azure/webapps-deploy@v2
+      with:
+        app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
+        images: '${{ secrets.AZURE_REGISTRY_SERVER }}/ncaa-softball:${{ github.sha }}'

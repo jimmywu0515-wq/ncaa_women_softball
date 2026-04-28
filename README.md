@@ -68,6 +68,25 @@ The architecture is built for scalability and production readiness, transitionin
 
 ---
 
+## 🛠️ CI/CD & Azure Deployment
+
+This project includes automated CI/CD pipelines via GitHub Actions to ensure code quality and seamless deployment to Microsoft Azure.
+
+### GitHub Actions Workflows
+- **CI ([ci.yml](.github/workflows/ci.yml))**: Triggered on every push. Performs linting with `flake8` and runs a scraper smoke test.
+- **CD ([cd_azure.yml](.github/workflows/cd_azure.yml))**: Triggered after successful CI on the `main` branch. Builds a Docker image, pushes it to **Azure Container Registry (ACR)**, and deploys to **Azure Web App for Containers**.
+
+### Azure Setup Requirements
+To enable the CD pipeline, you must configure the following **GitHub Secrets**:
+1. `AZURE_CREDENTIALS`: Output of the Azure CLI `az ad sp create-for-rbac` command.
+2. `AZURE_REGISTRY_SERVER`: Your ACR login server (e.g., `myregistry.azurecr.io`).
+3. `AZURE_REGISTRY_USERNAME`: ACR Admin username.
+4. `AZURE_REGISTRY_PASSWORD`: ACR Admin password.
+5. `AZURE_WEBAPP_NAME`: The name of your Azure Web App service.
+
+---
+
+## 📈 Engineering Decisions & Rationale
 ## 📈 Engineering Decisions & Rationale
 - **Why ELT instead of ETL?** By loading raw data first, we retain the ability to re-transform data if our analysis requirements change without needing to re-scrape the sources.
 - **Why dbt?** It brings software engineering best practices (version control, testing) to the SQL layer, which is critical when dealing with messy sports data.
@@ -79,5 +98,3 @@ The architecture is built for scalability and production readiness, transitionin
 - [ ] **Automated Seasonal Trigger**: Implement dynamic scheduling to automatically detect and fetch data when a new NCAA season begins.
 - [ ] **Expanded Multi-Sport Support**: Adapt the scraping logic for NCAA Baseball and other collegiate sports.
 - [ ] **Advanced Analytics**: Integrate machine learning models for player performance prediction.
-
----
